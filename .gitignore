@@ -1,0 +1,24 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+.DS_Store
+analysis/figure
+analysis/*png
+analysis/*html
+analysis/*_cache
+analysis/site_libs
+
+# Patient data and results are not shared (restricted access)
+data/*
+!data/README.md
+output/*
+!output/README.md
+
+# Rendered analysis pages can show patient identifiers - do not publish them
+docs/*.html
+!docs/index.html
+!docs/about.html
+!docs/license.html
+docs/figure/
