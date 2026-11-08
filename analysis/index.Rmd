@@ -1,0 +1,20 @@
+---
+title: "Home"
+site: workflowr::wflow_site
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+Analysis code for *Spatial mapping reveals convergent cytotoxic inflammation and divergent immune architectures in panniculitis* (Nature Communications, 2026).
+
+1. `01_IMC_read_data.Rmd` - read steinbock output
+2. `02_IMC_marker_quality_check.Rmd` - marker quality control
+3. `03_IMC_Clustering.Rmd` - clustering, cell-type annotation and spatial analysis
+4. `04_IMC_Figures.Rmd` - IMC figures
+5. `05_NanoString_Figures.Rmd` - nCounter figures
+6. `06_IF_IL1B_NLRP3_LPS_LTA.Rmd` - immunofluorescence quantification
+
+Patient data are not included; see the README of the repository.

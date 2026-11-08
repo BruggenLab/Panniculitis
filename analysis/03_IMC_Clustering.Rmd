@@ -1,0 +1,854 @@
+---
+title: "03 IMC: clustering, cell-type annotation and spatial analysis"
+output: html_document
+date: "2025-09-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE, cache=FALSE}
+library(imcRtools)
+library(cytomapper)
+library(stringr)
+library(dittoSeq)
+library(patchwork)
+library(RColorBrewer)
+library(scater)
+library(viridis)
+library(scuttle)
+library(batchelor)
+library(dplyr)
+library(Rphenograph)
+library(igraph)
+library(CATALYST)
+library(scales)
+library(Seurat)
+library(SeuratObject)
+library(scran)
+library(bluster)
+library(future)
+library(BiocParallel)
+library(data.table)
+library(circlize)
+```
+
+
+```{r}
+spe <- readRDS(here::here("data", "spe_all.rds"))
+```
+
+
+## Dimensionality reduction remove unwanted channels
+```{r}
+library(matrixStats)
+expr_mat <- assay(spe, "exprs")
+marker_variance <- rowVars(expr_mat)
+top_markers <- order(marker_variance, decreasing = TRUE)[20:38]  # Try top 20
+rownames(spe)[top_markers]
+```
+
+```{r}
+rowData(spe)$use_channel <- !grepl("DNA|ICSK|PDL1|PD1|CD45RO|CD45RA|CD14|CD19|CD25|CXCR3|CCR4|IgM|Ki-67|CLA|CD56", rownames(spe))
+```
+
+# fastMNN correction
+```{r}
+print(paste("Start time fastMNN correction:", Sys.time()))
+
+set.seed(220228)
+
+parallel_params <- MulticoreParam(workers = 14, log = TRUE, progressbar = TRUE)
+register(parallel_params)
+
+out <- fastMNN(spe,
+               batch = spe$patient_id,
+               auto.merge = TRUE,
+               subset.row = rowData(spe)$use_channel,
+               assay.type = "exprs",
+#               k = 18,
+               BPPARAM = parallel_params,
+               BSPARAM = BiocSingular::ExactParam())
+
+reducedDim(spe, "fastMNN") <- reducedDim(out, "corrected")
+
+set.seed(220228)
+spe <- runUMAP(spe, dimred= "fastMNN", name = "UMAP_mnnCorrected")
+
+print(paste("End time fastMNN correction:", Sys.time()))
+```
+
+#visualize single-cell metadata
+```{r,fig.height=10, fig.width=20}
+dittoDimPlot(spe, var = "patient_id", reduction.use = "UMAP_mnnCorrected", size = 0.2) + scale_color_manual(values = metadata(spe)$color_vectors$patient_id) +ggtitle("UMAP Corrected")
+```
+
+## fastMNN
+```{r,fig.height=10, fig.width=20}
+set.seed(220621)
+clusters <- clusterCells(spe,
+                         use.dimred = "fastMNN",
+                         BLUSPARAM = SNNGraphParam(k = 29,
+                                        cluster.fun = "louvain",
+                                        type = "rank"))
+
+spe$nn_clusters_corrected_fastMNN <- clusters
+
+dittoDimPlot(spe, var = "nn_clusters_corrected_fastMNN",
+             reduction.use = "UMAP_mnnCorrected", size = 0.2,
+             do.label = TRUE) +
+    ggtitle("SNN clusters on UMAP_mnnCorrected, integrated cells")
+```
+
+
+```{r,fig.height=10, fig.width=18}
+
+rowData(spe)$use_channel2= rowData(spe)$use_channel2=rowData(spe)$use_channel2 <- !grepl("DNA|ICSK|PDL1|PD1|CD45RO|CD25|CXCR3|CCR4|E-Cadherin", rownames(spe))
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_clusters_corrected_fastMNN, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs",
+             show_colnames = TRUE,
+             cluster_cols = FALSE,
+             cluster_rows = TRUE,  display_numbers = TRUE,
+             annot.by = c("nn_clusters_corrected_fastMNN")
+             )
+```
+
+# assign cell-type
+
+#assign cell types to clusters
+```{r}
+
+cluster_celltype <- recode(spe$nn_clusters_corrected_fastMNN,
+                           "1"  = "Macrophages",
+                           "2"  = "Helper/Regulatory T-cells",
+                           "3"  = "Cytotoxic T-cells",
+                           "4"  = "Adipocytes",
+                           "5"  = "Cytotoxic T-cells",
+                           "6"  = "APCs",
+                           "7"  = "B-cells",
+                           "8"  = "DCs",
+                           "9"  = "Macrophages",
+                           "10" = "Helper T-cells",
+                           "11" = "IgM B-cells",
+                           "12" = "Macrophages",
+                           "13" = "Neutrophils",
+                           "14" = "Macrophages",
+                           "15" = "Others",
+                           "16" = "Others")
+
+
+spe$celltype <- cluster_celltype
+unique(spe$celltype)
+
+spe$celltype <- factor(
+  spe$celltype,
+  levels = c(levels(spe$celltype), "Endothelial","Regulatory T-cells","M1 Macrophages","M2 Macrophages")
+)
+
+## color cell-type
+
+celltype <- setNames(
+c("#d62728",
+  "#ff7f0e",
+  "#ffbb78",
+  "#1f77b4",
+  "#6baed6",
+  "#aec7e8",
+  "#8c564b",
+  "#C4A484",
+  "#2ca02c",
+  "#c5b0d5",
+  "#393b79",
+  "#7f7f7f",
+  "#f7b6d2",
+  "#FF7F7F",
+  "#1f77b4"),
+            
+c("Macrophages",
+  "M1 Macrophages",
+  "M2 Macrophages",
+  "Helper/Regulatory T-cells",
+  "Helper T-cells",
+  "Cytotoxic T-cells",
+  "B-cells",
+  "IgM B-cells",
+  "Neutrophils",
+  "DCs",
+  "APCs",
+  "Others",
+  "Adipocytes",
+  "Endothelial",
+  "Regulatory T-cells"))
+
+metadata(spe)$color_vectors$celltype <- celltype
+```
+
+
+#subcluster IgM B-cells
+```{r,fig.height=10, fig.width=18}
+# choose the parent cluster to subcluster
+parent_cluster <- "IgM B-cells"
+
+# indices of cells in that cluster
+idx <- spe$celltype == parent_cluster
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 150,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.4, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("IgM B-cells_1")]$celltype <- "Endothelial"
+spe[,spe$nn_subcluster_label %in% c("IgM B-cells_2")]$celltype <- "IgM B-cells"
+spe[,spe$nn_subcluster_label %in% c("IgM B-cells_3")]$celltype <- "Endothelial"
+spe[,spe$nn_subcluster_label %in% c("IgM B-cells_4")]$celltype <- "IgM B-cells"
+```
+
+
+#subcluster Adipocytes
+```{r,fig.height=10, fig.width=18}
+# choose the parent cluster to subcluster
+parent_cluster <- "Adipocytes"
+
+# indices of cells in that cluster
+idx <- spe$celltype == parent_cluster
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 275,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.4, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("Adipocytes_1")]$celltype <- "Adipocytes"
+spe[,spe$nn_subcluster_label %in% c("Adipocytes_2")]$celltype <- "DCs"
+spe[,spe$nn_subcluster_label %in% c("Adipocytes_3")]$celltype <- "Others"
+spe[,spe$nn_subcluster_label %in% c("Adipocytes_4")]$celltype <- "Others"
+```
+
+
+#subcluster DCs
+```{r,fig.height=10, fig.width=18}
+# choose the parent cluster to subcluster
+parent_cluster <- "DCs"
+
+# indices of cells in that cluster
+idx <- spe$celltype == parent_cluster
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 250,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("DCs_1")]$celltype <- "DCs"
+spe[,spe$nn_subcluster_label %in% c("DCs_2")]$celltype <- "DCs"
+spe[,spe$nn_subcluster_label %in% c("DCs_3")]$celltype <- "DCs"
+spe[,spe$nn_subcluster_label %in% c("DCs_4")]$celltype <- "Adipocytes"
+```
+
+
+
+#subcluster Macrophages
+```{r,fig.height=10, fig.width=18}
+# choose the parent cluster to subcluster
+parent_cluster <- "Macrophages"
+
+# indices of cells in that cluster
+idx <- spe$celltype == parent_cluster
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 250,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("Macrophages_1")]$celltype <- "M1 Macrophages"
+spe[,spe$nn_subcluster_label %in% c("Macrophages_2")]$celltype <- "Macrophages"
+spe[,spe$nn_subcluster_label %in% c("Macrophages_3")]$celltype <- "M2 Macrophages"
+spe[,spe$nn_subcluster_label %in% c("Macrophages_4")]$celltype <- "M1 Macrophages"
+```
+
+
+
+#subcluster Helper/Regulatory T-cells
+```{r,fig.height=10, fig.width=18}
+parent_cluster <- "Helper/Regulatory T-cells"
+
+# indices of cells in that cluster
+idx <- spe$celltype %in%c(parent_cluster)
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 250,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("Helper/Regulatory T-cells_1")]$celltype <- "Helper T-cells"
+spe[,spe$nn_subcluster_label %in% c("Helper/Regulatory T-cells_2")]$celltype <- "Regulatory T-cells"
+spe[,spe$nn_subcluster_label %in% c("Helper/Regulatory T-cells_3")]$celltype <- "Regulatory T-cells"
+spe[,spe$nn_subcluster_label %in% c("Helper/Regulatory T-cells_4")]$celltype <- "Helper T-cells"
+spe[,spe$nn_subcluster_label %in% c("Helper/Regulatory T-cells_5")]$celltype <- "Helper T-cells"
+```
+
+
+#Others
+```{r,fig.height=10, fig.width=18}
+parent_cluster <- "Others"
+
+# indices of cells in that cluster
+idx <- spe$celltype %in%c(parent_cluster)
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 275,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("Others_1")]$celltype <- "DCs"
+```
+
+
+
+#Neutrophils
+```{r,fig.height=10, fig.width=18}
+parent_cluster <- "Neutrophils"
+
+# indices of cells in that cluster
+idx <- spe$celltype %in%c(parent_cluster)
+
+spe_sub <- spe[, idx]   # subset SCE to just that cluster
+ncol(spe_sub)
+
+
+set.seed(220621)
+subclusters <- clusterCells(
+  spe_sub,
+  use.dimred = "fastMNN",   # reuses the fastMNN coords of these cells
+  BLUSPARAM = SNNGraphParam(
+    k = 275,                 # maybe smaller for fewer cells; 29 is also OK if enough cells
+    cluster.fun = "louvain",
+    type = "rank"
+  )
+)
+
+# store subclusters back into the full SCE
+spe$nn_subcluster <- NA_integer_
+spe$nn_subcluster[idx] <- subclusters
+
+
+
+spe$nn_subcluster_label <- as.character(spe$celltype)
+spe$nn_subcluster_label[idx] <- paste0(parent_cluster, "_", subclusters)
+spe$nn_subcluster_label <- factor(spe$nn_subcluster_label)
+
+
+dittoDimPlot(spe, var = "nn_subcluster_label", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) 
+
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$nn_subcluster_label, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("nn_subcluster_label"),
+             order.by = c("nn_subcluster_label"), angle_row = 45
+             )
+
+
+spe[,spe$nn_subcluster_label %in% c("Neutrophils_2")]$celltype <- "Others"
+spe[,spe$nn_subcluster_label %in% c("Neutrophils_3")]$celltype <- "M2 Macrophages"
+
+```
+
+
+# ##################
+#assign cell General
+```{r,fig.height=10, fig.width=20}
+
+cluster_celltype_general <- recode(spe$celltype,
+                           "M1 Macrophages"     = "Macrophages",
+                           "Macrophages"        = "Macrophages",
+                           "M2 Macrophages"     = "Macrophages",                           
+                           "Helper T-cells"     = "T-cells",
+                           "Cytotoxic T-cells"  = "T-cells",
+                           "Regulatory T-cells" = "T-cells",
+                           "B-cells"            = "B-cells",
+                           "IgM B-cells"        = "B-cells",
+                           "APCs"               = "Antigen presenting myeloid",
+                           "DCs"                = "Antigen presenting myeloid",
+                           "Endothelial"        = "Endothelial",
+                           "Adipocytes"         = "Adipocytes",
+                           "Neutrophils"        = "Neutrophils",
+                           "Others"             = "Others")
+
+
+spe$celltype_general <- cluster_celltype_general
+
+celltype_general <- setNames(
+c(
+  "#ff7f0e",
+  "#6baed6",
+  "#C4A484",
+  "#2ca02c",
+  "#9a8fbc",
+  "#7f7f7f",
+  "#f7b6d2",
+  "#FF7F7F"),
+            
+c("Macrophages",
+  "T-cells",
+  "B-cells",
+  "Neutrophils",
+  "Antigen presenting myeloid",
+  "Others",
+  "Adipocytes",
+  "Endothelial"))
+
+metadata(spe)$color_vectors$celltype_general <- celltype_general
+
+
+dittoDimPlot(spe, var = "celltype_general", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) +
+  scale_color_manual(values = metadata(spe)$color_vectors$celltype_general)+
+    ggtitle("Phenograph clusters expression on seurat UMAP, integrated cells")
+
+```
+
+
+# Heatmap cell-type
+```{r,fig.height=11, fig.width=10}
+
+rowData(spe)$use_channel3= rowData(spe)$use_channel2=rowData(spe)$use_channel2 <- !grepl("DNA|ICSK|PDL1|PD1|CD45RO|CXCR3|CCR4|E-Cadherin", rownames(spe))
+
+
+spe$celltype_factor <- spe$celltype
+spe$celltype_factor <- factor(spe$celltype_factor, levels = c("Macrophages",
+                                                              "M1 Macrophages",
+                                                              "M2 Macrophages",
+                                                              "Helper T-cells",
+                                                              "Cytotoxic T-cells",
+                                                              "Regulatory T-cells",
+                                                              "Neutrophils",
+                                                              "B-cells",
+                                                              "IgM B-cells",
+                                                              "DCs",
+                                                              "APCs",
+                                                              "Endothelial",  
+                                                              "Adipocytes",
+                                                              "Others"))
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$celltype, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("celltype"),
+             order.by = c("celltype_factor"),
+             annotation_colors =  list(celltype =metadata(spe)$color_vectors$celltype), angle_row = 45
+             )
+
+```
+
+
+# UMAP cell-type
+```{r,fig.height=10, fig.width=20}
+dittoDimPlot(spe, var = "celltype", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = TRUE,labels.size = 6,legend.size = 8) +
+  scale_color_manual(values = metadata(spe)$color_vectors$celltype)+
+    ggtitle("Phenograph clusters expression on seurat UMAP, integrated cells")
+```
+
+# Barplots
+```{r,fig.height=10,fig.width=25}
+
+dittoBarplots <- list()
+
+for (i in unique(spe$indication)) {
+  
+p <- dittoBarPlot(spe[,spe$indication %in% i], 
+             var = "celltype", 
+             group.by = "sample_id",
+             main = i) +
+    scale_fill_manual(values = metadata(spe)$color_vectors$celltype)
+
+
+dittoBarplots[[i]] <- p
+}
+
+
+dittoBarplots[[1]] + dittoBarplots[[2]] + dittoBarplots[[3]]  + plot_layout(nrow = 2, byrow = FALSE)
+
+
+```
+
+
+```{r,fig.height=10,fig.width=25}
+
+dittoBarplots <- list()
+
+for (i in unique(spe$indication)) {
+  
+p <- dittoBarPlot(spe[,spe$indication %in% i], 
+             scale = "count",
+             var = "celltype", 
+             group.by = "sample_id",
+             main = i) +
+    scale_fill_manual(values = metadata(spe)$color_vectors$celltype)
+
+
+dittoBarplots[[i]] <- p
+}
+
+
+dittoBarplots[[1]] + dittoBarplots[[2]] + dittoBarplots[[3]]   + plot_layout(nrow = 2, byrow = FALSE)
+
+```
+
+
+```{r,fig.height=7,fig.width=10}
+dittoBarPlot(spe, 
+             var = "indication", 
+             group.by = "celltype",
+             scale = "count",) +
+    scale_fill_manual(values = metadata(spe)$color_vectors$indication) 
+```
+
+
+
+# Cell fraction per ROI
+```{r,fig.height=14, fig.width=14}
+# ---- helper to compute fraction per area from a SpatialExperiment ----
+get_fraction_per_area <- function(spe) {
+
+  meta <- as.data.frame(colData(spe))
+  
+  # area per sample_id (and indication, in case multiple indications exist)
+  area_tbl <- meta %>%
+    dplyr::distinct(sample_id, width_px, height_px, indication) %>%
+    dplyr::mutate(area_px = width_px * height_px / 100000)
+  
+  # total cells per sample_id x indication
+  total_cells <- meta %>% 
+    dplyr::count(sample_id, indication, name = "total_cells")
+  
+  # cells per sample_id x celltype x indication
+  counts_tbl <- meta %>%
+    dplyr::count(sample_id, celltype, indication, name = "cell_count")
+  
+  # join all info
+  counts_tbl %>%
+    dplyr::left_join(total_cells, by = c("sample_id", "indication")) %>%
+    dplyr::left_join(area_tbl,    by = c("sample_id", "indication")) %>%
+    dplyr::filter(!is.na(area_px) & area_px > 0) %>%
+    dplyr::mutate(
+      fraction         = cell_count / total_cells,
+      fraction_per_area = fraction / area_px
+    )
+}
+
+# ---- compute for all indications at once ----
+fraction_area_data <- get_fraction_per_area(spe)
+
+# optional: set factor order for plotting
+fraction_area_data$indication <- factor(
+  fraction_area_data$indication,
+  levels = c("HC", "EN", "EI")
+)
+
+# ---- Wilcoxon comparisons vs HC ----
+hc_comparisons <- list(
+  c("HC", "EN"),
+  c("HC", "EI"),
+  c("EN", "EI")
+)
+
+library(ggpubr)
+# ---- plot ----
+p <- ggplot(fraction_area_data, aes(x = indication, y = fraction_per_area, fill = indication)) +
+  geom_boxplot(outlier.shape = NA, width = 0.7) +
+  geom_jitter(width = 0.15, alpha = 0.6, size = 1.6) +
+  facet_wrap(~ celltype, scales = "free_y") +
+  theme_bw() +
+  labs(
+    title = "Cell fraction per area by indication",
+    x = "Indication",
+    y = "Cell fraction (per mm²)"
+  ) +
+  stat_compare_means(
+    comparisons = hc_comparisons,
+    method = "wilcox.test",
+    exact = FALSE,           # avoid ties warning
+    p.adjust.method = "BH",
+    label = "p.format",
+    step.increase = 0.08,
+    hide.ns = TRUE
+  )
+
+p
+
+
+```
+
+# TestInteractions
+```{r}
+spe_list <- list(EI = spe[,spe$indication=="EI"], EN = spe[,spe$indication=="EN"], HC = spe[,spe$indication=="HC"])
+
+
+run_one <- function(spe) {
+
+  spe <- buildSpatialGraph(spe, img_id = "sample_id", type = "knn", k = 30)
+
+  parallel.params <-   MulticoreParam(workers = min(12, parallel::detectCores()), RNGseed = 221029, progressbar = FALSE, log = FALSE)
+
+  out <- testInteractions(spe,
+                          group_by = "sample_id",
+                          label = "celltype",
+                          colPairName = "knn_interaction_graph",
+                          BPPARAM = parallel.params
+                          )
+
+  plt <- out %>% as_tibble() %>% filter(!is.na(sigval)) %>%
+    group_by(from_label, to_label) %>%
+    summarize(sum_sigval = sum(sigval, na.rm = TRUE), .groups = "drop") %>%
+    ggplot(aes(from_label, to_label, fill = sum_sigval)) +
+    geom_tile() +
+    scale_fill_gradient2(low = scales::muted("blue"), mid = "white", high = scales::muted("red")) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = paste(unique(spe$indication), "Interactions by Cell Type"))
+
+  list(out = out, plot = plt)
+}
+
+res <- lapply(spe_list, run_one)
+
+
+saveRDS(res, here::here("data", "TestInteractions.rds"))
+
+# show all plots
+for (nm in names(res)) { message(nm); print(res[[nm]]$plot) }
+```
+
+
+# Save data in data folder
+```{r}
+saveRDS(spe, here::here("data", "spe_all_annoted_Final.rds"))
+```

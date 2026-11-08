@@ -1,0 +1,279 @@
+---
+title: "06 Immunofluorescence quantification (Fig. 7B, Supplementary Fig. 4)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggpubr)
+library(plyr)
+```
+
+
+```{r}
+path = here::here("data", "AB_quantification")
+```
+
+# Fig 7B IL1B
+```{r}
+IL1B <- data.frame(matrix(ncol = 4, nrow = 0))
+
+# EI
+base_dir = paste(path,"IL1B/EiB tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  IL1B <- rbind(IL1B, data.frame(fileName,mean(result$Mean),nrow(result),Type="EI"))
+}
+
+#EN
+base_dir = paste(path,"IL1B/EN tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  IL1B <- rbind(IL1B, data.frame(fileName,mean(result$Mean),nrow(result),Type="EN"))
+}
+
+
+#HC IL1b.HC.08.11.23 tiff
+base_dir = paste(path,"IL1B/IL1b.HC.08.11.23 tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  IL1B <- rbind(IL1B, data.frame(fileName,mean(result$Mean),nrow(result),Type="HC"))
+}
+
+colnames(IL1B) <- c("file_Name", "Mean", "Cells","Type")
+IL1B$AB <- "IL1B"
+
+IL1B$Type <- factor(IL1B$Type, c("HC","EN","EI"))
+
+IL1B
+```
+
+
+```{r}
+ggboxplot(IL1B, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "IL1B", xlab = "", ylab = "mean expression of IL1B" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+
+```
+
+```{r}
+ggboxplot(IL1B, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "IL1B", xlab = "", ylab = "mean AB expression" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          stat_compare_means(method = "anova")+
+          stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+          geom_hline(yintercept = mean(IL1B[,c(2)]), linetype = 2)+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+```
+
+```{r}
+res.aov <- aov(Mean ~ Type, data = IL1B)
+# summary(res.aov)
+TukeyHSD(res.aov)
+```
+
+# Fig 7B NLRP3
+```{r}
+NLRP3 <- data.frame(matrix(ncol = 4, nrow = 0))
+
+# EI
+base_dir = paste(path,"NLRP3/EiB tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  NLRP3 <- rbind(NLRP3, data.frame(fileName,mean(result$Mean),nrow(result),Type="EI"))
+}
+
+#EN
+base_dir = paste(path,"NLRP3/EN tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  NLRP3 <- rbind(NLRP3, data.frame(fileName,mean(result$Mean),nrow(result),Type="EN"))
+}
+
+#HC
+base_dir = paste(path,"NLRP3/NRLP3.HC.08.11.23 tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  NLRP3 <- rbind(NLRP3, data.frame(fileName,mean(result$Mean),nrow(result),Type="HC"))
+}
+
+colnames(NLRP3) <- c("file_Name", "Mean", "Cells","Type")
+NLRP3$AB <- "NLRP3"
+
+NLRP3$Type <- factor(NLRP3$Type, c("HC","EN","EI"))
+
+NLRP3
+```
+
+
+```{r}
+ggboxplot(NLRP3, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "NLRP3", xlab = "", ylab = "mean expression of NLRP3" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+
+```
+
+```{r}
+ggboxplot(NLRP3, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "NLRP3", xlab = "", ylab = "mean AB expression" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          stat_compare_means(method = "anova")+
+          stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+          geom_hline(yintercept = mean(NLRP3[,c(2)]), linetype = 2)+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+```
+
+```{r}
+res.aov <- aov(Mean ~ Type, data = NLRP3)
+# summary(res.aov)
+TukeyHSD(res.aov)
+```
+
+
+#Supplementary Figure 4A LTA
+
+```{r}
+LTA <- data.frame(matrix(ncol = 4, nrow = 0))
+
+# EI
+base_dir = paste(path,"LTA/EiB tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LTA <- rbind(LTA, data.frame(fileName,mean(result$Mean),nrow(result),Type="EI"))
+}
+
+
+#EN
+base_dir = paste(path,"LTA/EN tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LTA <- rbind(LTA, data.frame(fileName,mean(result$Mean),nrow(result),Type="EN"))
+
+}
+
+#HC
+base_dir = paste(path,"LTA/HC tiff 2",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LTA <- rbind(LTA, data.frame(fileName,mean(result$Mean),nrow(result),Type="HC"))
+}
+
+colnames(LTA) <- c("file_Name", "Mean", "Cells","Type")
+LTA$AB <- "LTA"
+
+LTA$Type <- factor(LTA$Type, c("HC","EN","EI"))
+
+LTA
+```
+
+
+```{r}
+
+ggboxplot(LTA, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "LTA", xlab = "", ylab = "mean expression of LTA" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+
+```
+
+
+```{r}
+ggboxplot(LTA, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "LTA", xlab = "", ylab = "mean AB expression" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          stat_compare_means(method = "anova")+
+          stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+          geom_hline(yintercept = mean(IL1B[,c(2)]), linetype = 2)+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+```
+
+
+```{r}
+res.aov <- aov(Mean ~ Type, data = LTA)
+TukeyHSD(res.aov)
+```
+
+
+
+#Supplementary Figure 4B LPS
+```{r}
+LPS <- data.frame(matrix(ncol = 4, nrow = 0))
+
+# EI
+base_dir = paste(path,"LPS/EiB tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LPS <- rbind(LPS, data.frame(fileName,mean(result$Mean),nrow(result),Type="EI"))
+}
+
+#EN
+base_dir = paste(path,"LPS/1_EN_10x tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LPS <- rbind(LPS, data.frame(fileName,mean(result$Mean),nrow(result),Type="EN"))
+}
+
+#HC
+base_dir = paste(path,"LPS/1_HC_10x tiff",sep="/")
+
+file_list = fs::dir_ls(base_dir, glob = '*_Results.csv$')
+for(i in file_list){
+  result = read.csv(i)
+  fileName = strsplit(strsplit(i,split = '/')[[1]] [length(strsplit(i,split = '/')[[1]])] , split ='-')[[1]][1]
+  LPS <- rbind(LPS, data.frame(fileName,mean(result$Mean),nrow(result),Type="HC"))
+}
+
+colnames(LPS) <- c("file_Name", "Mean", "Cells","Type")
+LPS$AB <- "LPS"
+
+LPS$Type <- factor(LPS$Type, c("HC","EN","EI"))
+
+LPS
+```
+
+
+```{r}
+ggboxplot(LPS, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "LPS", xlab = "", ylab = "mean AB expression" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+```
+
+
+```{r}
+ggboxplot(LPS, x = "Type", y = "Mean" ,group_by="Type", fill = "Type", main = "LPS", xlab = "", ylab = "mean AB expression" , palette = c("EN" = "#01c7e1","EI" = "#fe2504","HC" = "#ffc700"))+
+          stat_compare_means(method = "anova")+
+          stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+          geom_hline(yintercept = mean(IL1B[,c(2)]), linetype = 2)+
+          theme(text = element_text(size = 15))+  theme(plot.title = element_text(hjust = 0.5)) + theme(legend.position="right")
+```
+
+```{r}
+res.aov <- aov(Mean ~ Type, data = LPS)
+TukeyHSD(res.aov)
+```
+

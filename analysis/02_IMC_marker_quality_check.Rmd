@@ -1,0 +1,246 @@
+---
+title: "02 IMC: marker quality check"
+output: html_document
+date: "2025-02-28"
+---
+
+```{r, include=FALSE, warning=FALSE, message=FALSE, cache=FALSE}
+library(imcRtools)
+library(cytomapper)
+library(ggrepel)
+library(dittoSeq)
+library(patchwork)
+library(viridis)
+library(cytoviewer)
+library(dittoSeq)
+library(viridis)
+library(tidyverse)
+library(EBImage)
+```
+
+
+```{r}
+spe <- readRDS(here::here("data", "spe_all.rds"))
+
+images <- readRDS(here::here("data", "images.rds"))
+```
+
+
+#signal-to-noise ratio (SNR) 
+#otsu thresholding approach to find pixels of the “foreground” (i.e., signal) and “background” (i.e., noise).
+#SNR is then defined as the mean intensity of foreground pixels divided by the mean intensity of background pixels.
+#average SNR versus the average signal intensity
+```{r,fig.height=7,fig.width=9}
+
+cur_snr <- lapply(names(images), function(x){
+    img <- images[[x]]
+    mat <- apply(img, 3, function(ch){
+        # Otsu threshold
+        thres <- otsu(ch, range = c(min(ch), max(ch)), levels = 65536)
+        # Signal-to-noise ratio
+        snr <- mean(ch[ch > thres]) / mean(ch[ch <= thres])
+        # Signal intensity
+        ps <- mean(ch[ch > thres])
+        
+        return(c(snr = snr, ps = ps))
+    })
+    t(mat) %>% as.data.frame() %>% 
+        mutate(image = x,
+               marker = colnames(mat)) %>% 
+        pivot_longer(cols = c(snr, ps))
+})
+
+cur_snr <- do.call(rbind, cur_snr)
+
+cur_snr %>% 
+    group_by(marker, name) %>%
+    summarize(log_mean = log2(mean(value))) %>%
+    pivot_wider(names_from = name, values_from = log_mean) %>%
+    ggplot() +
+    geom_point(aes(ps, snr)) +
+    geom_label_repel(aes(ps, snr, label = marker)) +
+    theme_minimal(base_size = 15) + ylab("Signal-to-noise ratio [log2]") +
+    xlab("Signal intensity [log2]")
+    
+
+```
+
+# high SNR but low signal intensity meaning that in general these markers are not abundantly expressed.
+# we will remove markers that have a positive signal of below 2 per image
+```{r,fig.height=7,fig.width=9}
+cur_snr_2 <- cur_snr %>% 
+    pivot_wider(names_from = name, values_from = value) %>%
+    filter(ps > 2) %>%
+    pivot_longer(cols = c(snr, ps))
+
+cur_snr_2 %>% 
+    group_by(marker, name) %>%
+    summarize(log_mean = log2(mean(value))) %>%
+    pivot_wider(names_from = name, values_from = log_mean) %>%
+    ggplot() +
+    geom_point(aes(ps, snr)) +
+    geom_label_repel(aes(ps, snr, label = marker)) +
+    theme_minimal(base_size = 15) + ylab("Signal-to-noise ratio [log2]") +
+    xlab("Signal intensity [log2]")
+```
+
+
+
+```{r,fig.height=8,fig.width=14}
+library(scuttle)
+
+image_mean <- aggregateAcrossCells(spe, 
+                                   ids = spe$sample_id, 
+                                   statistics="mean",
+                                   use.assay.type = "counts")
+assay(image_mean, "exprs") <- asinh(counts(image_mean))
+
+dittoHeatmap(image_mean, genes = rownames(spe)[rowData(spe)$use_channel],
+             assay = "exprs", cluster_cols = FALSE, scale = "none",
+             heatmap.colors = viridis(100), 
+             annot.by = c("indication","patient_id"),
+             show_colnames = TRUE)
+
+
+dittoHeatmap(image_mean, genes = rownames(spe)[rowData(spe)$use_channel],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE,
+             annot.by = c("indication","patient_id"),
+             heatmap.colors = colorRampPalette(c("dark blue", "white", "dark red"))(100),
+             breaks = seq(-3, 3, length.out = 101)
+             )
+
+```
+
+#Cell-level quality control
+#intensity of the signal (mean intensity of cells with positive signal) / intensity of the noise (mean intensity of cells lacking expression). 
+```{r,fig.height=7,fig.width=9}
+library(mclust)
+
+set.seed(220224)
+mat <- sapply(seq_len(nrow(spe)), function(x){
+    cur_exprs <- assay(spe, "exprs")[x,]
+    cur_counts <- assay(spe, "counts")[x,]
+    
+    cur_model <- Mclust(cur_exprs, G = 2)
+    mean1 <- mean(cur_counts[cur_model$classification == 1])
+    mean2 <- mean(cur_counts[cur_model$classification == 2])
+    
+    signal <- ifelse(mean1 > mean2, mean1, mean2)
+    noise <- ifelse(mean1 > mean2, mean2, mean1)
+    
+    return(c(snr = signal/noise, ps = signal))
+})
+    
+cur_snr_3 <- t(mat) %>% as.data.frame() %>% 
+        mutate(marker = rownames(spe))
+
+cur_snr_3 %>% ggplot() +
+    geom_point(aes(log2(ps), log2(snr))) +
+    geom_label_repel(aes(log2(ps), log2(snr), label = marker)) +
+    theme_minimal(base_size = 15) + ylab("Signal-to-noise ratio [log2]") +
+    xlab("Signal intensity [log2]")
+```
+
+
+
+# Visualizing marker expression
+
+## Per cell
+
+```{r,fig.height=8, fig.width=12}
+image_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$patient_id, statistics = "mean", use.assay.type = "exprs")
+
+
+# Z score scaled
+dittoHeatmap(image_mean, genes = rownames(spe)[rowData(spe)$use_channel],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = TRUE,
+             annot.by = c("indication","patient_id"),
+             heatmap.colors = colorRampPalette(c("dark blue", "white", "dark red"))(100),
+             breaks = seq(-3, 3, length.out = 101)
+             )
+```
+
+
+#Number of cells per indication
+```{r,fig.height=4, fig.width=3}
+   table(spe$indication)%>%
+    as.data.frame() %>% ggplot() +
+        geom_point(aes(reorder(Var1,Freq), Freq)) + 
+        theme_minimal(base_size = 15) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+        ylab("Number of cells") + xlab("")
+```
+
+#Cell size
+```{r,fig.height=8, fig.width=15}
+colData(spe) %>%
+    as.data.frame() %>%
+    group_by(sample_id) %>%
+    ggplot() +
+        geom_boxplot(aes(sample_id, area)) +
+        theme_minimal(base_size = 15) + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+        ylab("Cell area") + xlab("")
+```
+
+
+```{r}
+summary(spe$area)
+```
+
+
+# delete larg cells
+```{r}
+spe <- spe[,spe$area <= 400]
+```
+
+
+```{r}
+summary(spe$area)
+```
+
+
+#Cell size
+```{r,fig.height=8, fig.width=15}
+colData(spe) %>%
+    as.data.frame() %>%
+    group_by(sample_id) %>%
+    ggplot() +
+        geom_boxplot(aes(sample_id, area)) +
+        theme_minimal(base_size = 15) + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+        ylab("Cell area") + xlab("")
+```
+
+
+#Number of cells per indication
+```{r,fig.height=4, fig.width=3}
+   table(spe$indication)%>%
+    as.data.frame() %>% ggplot() +
+        geom_point(aes(reorder(Var1,Freq), Freq)) + 
+        theme_minimal(base_size = 15) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+        ylab("Number of cells") + xlab("")
+```
+
+
+#Number of cells per image
+```{r,fig.height=8, fig.width=15}
+   table(spe$sample_id)%>%
+    as.data.frame() %>% ggplot() +
+        geom_point(aes(reorder(Var1,Freq), Freq)) + 
+        theme_minimal(base_size = 15) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+        ylab("Number of cells") + xlab("")
+```
+
+
+
+```{r}
+saveRDS(spe, here::here("data", "spe_all.rds"))
+```
+

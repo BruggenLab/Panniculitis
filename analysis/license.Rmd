@@ -1,0 +1,12 @@
+---
+title: "License"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+The code in this repository is released under the MIT License (see the `LICENSE` file).
+
+Please cite the paper and the Zenodo record of this repository (https://doi.org/10.5281/zenodo.XXXXXXX) when using the code.

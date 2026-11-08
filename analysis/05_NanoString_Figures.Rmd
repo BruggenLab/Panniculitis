@@ -1,0 +1,559 @@
+---
+title: "05 nCounter figures (Figs. 4-7A, Supplementary Fig. 2A)"
+output: html_document
+date: "2026-10-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# library
+```{r,echo=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ComplexHeatmap)
+library(pheatmap)
+library(readxl)
+library(ggpubr)
+library(plyr)
+library(dtplyr)
+library(gplots)
+library(reshape2)   # melt() used in the boxplot chunks
+```
+
+
+# Heatmap
+```{r}
+dataH <- read.csv(file = here::here("data", "PHOTO-2022-06-10-04-10-59.csv"), check.names = FALSE)
+
+dataH <- dataH[-2,-which(names(dataH) %in% c("Annotation","Accession #","NS Probe ID","Class Name","Analyte Type","% Samples above Threshold"))]
+
+rownames(dataH) <- dataH$`Probe Name`
+
+dataH <- dataH[,-which(names(dataH) %in% c("Probe Name"))]
+```
+
+# Fig 4A
+```{r,fig.height=13,fig.width=12}
+dataT <- dataH
+
+samplecondition <- data.frame (t(dataT[1,]))
+
+samplecondition$samplename <- rownames(samplecondition)
+
+samplecondition[,1] <- factor(samplecondition[,1], levels = c("HC","EN", "EI"))
+
+samplecondition <- samplecondition[order(samplecondition[,1]),]
+
+dataT<- dataT[samplecondition$samplename]
+
+temp <- dataT[2:610,]
+
+temp <- mutate_all(temp, function(x) as.numeric(as.character(x)))
+
+
+#sign <- ttest %>% head(n=40) %>%pull(Assay)
+#plot_sig <- temp %>% filter(row.names(temp) %in% sign) %>% as.matrix()
+
+gene_order <- c("TYK2","TRAF5","ZAP70","RUNX1","NOD1","IL1R1","CCL19","NFKB2","TICAM1","IL1B","RELB","RELA","TRAF4","IRAK1","CD14","TLR4","TLR1","TLR8","TLR2","TNFRSF1B","TNFRSF14","TRAF3","TRAF1","IRF5","STAT1","MYD88","ICAM1","CD40","TNF","CCL4","LTA","BCL2","ATM","TGFB1","TRAF2","TNFRSF4","TNFRSF8","TIRAP","TNFRSF10C","BCL10","NFKBIA","TNFAIP3","TLR3")
+plot_sig <- temp %>% filter(row.names(temp) %in% gene_order) %>% as.matrix()
+plot_sig <- plot_sig[gene_order[gene_order %in% rownames(plot_sig)], , drop = FALSE]
+
+
+plot_scale <- t(scale(t(plot_sig)))
+
+anno_group <- data.frame (t(dataT[1,]))[,1]
+
+metadata <- read_excel(here::here("data", "ClinicalMetadata.xlsx"))
+anno_idiopathic <- metadata$Idiopathic[match(colnames(dataT), metadata$Name)]
+
+column_ha <- HeatmapAnnotation(Condition = anno_group,
+                               Idiopathic = anno_idiopathic,
+                               col = list(Condition = c("HC" = "#ffc700","EI" = "#fe2504","EN" = "#01c7e1"),
+                                          Idiopathic = c("HC" = "#ffc700","Idiopathic" = "#e05c00","Not Idiopathic" = "#c8c8c8")),
+                               border = TRUE,annotation_name_gp= gpar(fontsize = 3),
+                               annotation_legend_param = list(direction = "horizontal",title = "Condition",
+                                                              title_gp = gpar(fontsize= 15),
+                                                              labels_gp = gpar(fontsize = 15)))
+
+ 
+heat_group <- Heatmap(plot_scale,
+                      name = " ",
+                      top_annotation = column_ha,
+                      row_names_gp = grid::gpar(fontsize = 15),cluster_rows = FALSE,
+                      column_names_gp = grid::gpar(fontsize = 10),
+                      column_title_gp = gpar(fontsize = 15),
+                      row_title = NULL,
+                      column_split = factor(rep(c("HC","EN","EI"),c(9,16,16)),levels = c("HC","EN","EI")),
+                      cluster_column_slices = FALSE,
+                      show_column_names = TRUE)
+heat_group
+
+```
+
+
+# Fig 4B
+```{r}
+data <- read.csv(file = here::here("data", "PHOTO-2022-06-10-04-10-59.jpg.csv"), check.names = FALSE)
+
+colnames(data)
+
+colnames(data)[8:48] <- sapply(as.vector(colnames(data[8:48])),function(x){strsplit(x,"_",)[[1]][3]})
+
+data <- data[-c(2),-c(2:7) ]
+
+for (i in c("TLR2","TLR4","IRAK1","CCL2","RELA","NFKBIA")) {
+
+dratiodf <- melt(data[data$`Probe Name` %in% c(i),],id.vars = "Probe Name",variable.name = "Type",value.name = "Value")
+    
+dratiodf$Group <- toupper(stringr::str_extract(dratiodf$Type, "^.{2}"))
+    
+dratiodf$Value <- as.integer(dratiodf$Value)
+    
+dratiodf$Group <- as.factor(dratiodf$Group)
+    
+dratiodf$Group <- factor(dratiodf$Group,c("BS","EN","EI"))
+    
+dratiodf$Group <- revalue(dratiodf$Group,c("BS"="HC","EN","EI"))
+    
+p <- ggboxplot(dratiodf, x = "Group", y = "Value" ,group_by="Group", fill = "Group",main = i, xlab = "", ylab = "Normalized Counts" ,
+        palette = c("HC" = "#FFC700","EN" = "#01C7E1","EI" = "#FE2504"))+
+        #           stat_compare_means(method ="anova",label.y = 150)+
+        stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+        geom_hline(yintercept = mean(dratiodf[,c(3)]), linetype = 2)+
+        theme(text = element_text(size = 20))+  theme(plot.title = element_text(hjust = 0.5))+
+        theme(legend.position="right")
+
+print(p)
+}
+```
+
+# Fig 4B check significant genes box plots
+```{r}
+DEEN <- read.csv(file = here::here("data", "DE results - TypeEN.csv"))
+DEEI <- read.csv(file = here::here("data", "DE results - TypeEI.csv"))
+
+genes_box <- c("TLR2","TLR4","IRAK1","CCL2","RELA","NFKBIA")
+
+pval_stars <- function(p) ifelse(is.na(p), "not found",
+                          ifelse(p <= 0.001, "***",
+                          ifelse(p <= 0.01,  "**",
+                          ifelse(p <= 0.05,  "*", "ns"))))
+
+sig_check <- data.frame(
+  Gene     = genes_box,
+  pval_EN  = DEEN$BY.p.value[match(genes_box, DEEN$gene)],
+  pval_EI  = DEEI$BY.p.value[match(genes_box, DEEI$gene)]
+)
+sig_check$stars_EN <- pval_stars(sig_check$pval_EN)
+sig_check$stars_EI <- pval_stars(sig_check$pval_EI)
+
+print(sig_check)
+```
+
+# Fig 5A
+```{r,fig.height=10,fig.width=12}
+dataT <- dataH
+
+samplecondition <- data.frame (t(dataT[1,]))
+
+samplecondition$samplename <- rownames(samplecondition)
+
+samplecondition[,1] <- factor(samplecondition[,1], levels = c("HC","EN", "EI"))
+
+samplecondition <- samplecondition[order(samplecondition[,1]),]
+
+dataT<- dataT[samplecondition$samplename]
+
+temp <- dataT[2:610,]
+
+temp <- mutate_all(temp, function(x) as.numeric(as.character(x)))
+
+
+#sign <- ttest %>% head(n=40) %>%pull(Assay)
+#plot_sig <- temp %>% filter(row.names(temp) %in% sign) %>% as.matrix()
+
+gene_order <- c("CCR6","IL13","IL23A","IL22","IL4","IL5","RORC","GATA3","IFNG","CXCL9","CCL5","TGFB1","CXCR3","CCR5","CCL3","TNF","CCR1","IL1B","CCL2","CCL7","CXCL10","CXCL11","CCR2","IL8","CXCL1","IL6" )
+plot_sig <- temp %>% filter(row.names(temp) %in% gene_order) %>% as.matrix()
+plot_sig <- plot_sig[gene_order[gene_order %in% rownames(plot_sig)], , drop = FALSE]
+
+
+plot_scale <- t(scale(t(plot_sig)))
+
+anno_group <- data.frame (t(dataT[1,]))[,1]
+
+anno_idiopathic <- metadata$Idiopathic[match(colnames(dataT), metadata$Name)]
+
+column_ha <- HeatmapAnnotation(Condition = anno_group,
+                               Idiopathic = anno_idiopathic,
+                               col = list(Condition = c("HC" = "#ffc700","EI" = "#fe2504","EN" = "#01c7e1"),
+                                          Idiopathic = c("HC" = "#ffc700","Idiopathic" = "#e05c00","Not Idiopathic" = "#c8c8c8")),
+                               border = TRUE,annotation_name_gp= gpar(fontsize = 3),
+                               annotation_legend_param = list(direction = "horizontal",title = "Condition",
+                                                              title_gp = gpar(fontsize= 15),
+                                                              labels_gp = gpar(fontsize = 15)))
+
+
+heat_group <- Heatmap(plot_scale,
+                      name = " ",
+                      top_annotation = column_ha,
+                      row_names_gp = grid::gpar(fontsize = 15),cluster_rows = FALSE,
+                      column_names_gp = grid::gpar(fontsize = 10),
+                      column_title_gp = gpar(fontsize = 15),
+                      row_title = NULL,
+                      column_split = factor(rep(c("HC","EN","EI"),c(9,16,16)),levels = c("HC","EN","EI")),
+                      cluster_column_slices = FALSE,
+                      show_column_names = TRUE)
+heat_group
+
+```
+
+
+# Fig 5B
+```{r}
+for (i in c("IL1B","IFNG","IL6","IL4","IL13","IL5","RORC","GATA3")) {
+
+dratiodf <- melt(data[data$`Probe Name` %in% c(i),],id.vars = "Probe Name",variable.name = "Type",value.name = "Value")
+    
+dratiodf$Group <- toupper(stringr::str_extract(dratiodf$Type, "^.{2}"))
+    
+dratiodf$Value <- as.integer(dratiodf$Value)
+    
+dratiodf$Group <- as.factor(dratiodf$Group)
+    
+dratiodf$Group <- factor(dratiodf$Group,c("BS","EN","EI"))
+    
+dratiodf$Group <- revalue(dratiodf$Group,c("BS"="HC","EN","EI"))
+    
+p <- ggboxplot(dratiodf, x = "Group", y = "Value" ,group_by="Group", fill = "Group",main = i, xlab = "", ylab = "Normalized Counts" ,
+        palette = c("HC" = "#FFC700","EN" = "#01C7E1","EI" = "#FE2504"))+
+        #           stat_compare_means(method ="anova",label.y = 150)+
+        stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+        geom_hline(yintercept = mean(dratiodf[,c(3)]), linetype = 2)+
+        theme(text = element_text(size = 20))+  theme(plot.title = element_text(hjust = 0.5))+
+        theme(legend.position="right")
+
+print(p)
+}
+
+```
+
+# Fig 5B check significant genes box plots
+```{r}
+genes_box <- c("IL1B","IFNG","IL6","IL4","IL13","IL5","RORC","GATA3")
+
+
+pval_stars <- function(p) ifelse(is.na(p), "not found",
+                          ifelse(p <= 0.001, "***",
+                          ifelse(p <= 0.01,  "**",
+                          ifelse(p <= 0.05,  "*", "ns"))))
+
+sig_check <- data.frame(
+  Gene     = genes_box,
+  pval_EN  = DEEN$BY.p.value[match(genes_box, DEEN$gene)],
+  pval_EI  = DEEI$BY.p.value[match(genes_box, DEEI$gene)]
+)
+sig_check$stars_EN <- pval_stars(sig_check$pval_EN)
+sig_check$stars_EI <- pval_stars(sig_check$pval_EI)
+
+print(sig_check)
+```
+
+# Fig 5B check significant genes box plots DE for IFNG, IL4, IL5, IL3 (for not found)
+```{r}
+genes_de_extra <- c("IFNG", "IL4", "IL5", "IL3","IL6")
+
+condition_vec <- as.character(unlist(dataH[1, ]))
+names(condition_vec) <- colnames(dataH)
+
+all_genes <- rownames(dataH)[2:nrow(dataH)]
+
+run_de <- function(genes_of_interest, group1, group2) {
+  all_results <- lapply(all_genes, function(g) {
+    expr <- as.numeric(dataH[g, ])
+    g1 <- expr[condition_vec == group1]
+    g2 <- expr[condition_vec == group2]
+    tt <- tryCatch(t.test(g1, g2), error = function(e) NULL)
+    if (is.null(tt)) return(data.frame(Gene=g, log2FC=NA, p.value=NA))
+    data.frame(Gene   = g,
+               log2FC = log2(mean(g1, na.rm=TRUE) / mean(g2, na.rm=TRUE)),
+               p.value = tt$p.value)
+  })
+  df <- do.call(rbind, all_results)
+  df$BY.p.value  <- p.adjust(df$p.value, method = "BY")
+  df$stars       <- pval_stars(df$BY.p.value)
+  df$comparison  <- paste0(group1, " vs ", group2)
+  df[df$Gene %in% genes_of_interest, c("Gene","comparison","log2FC","p.value","BY.p.value","stars")]
+}
+
+de_EN <- run_de(genes_de_extra, "EN", "HC")
+de_EI <- run_de(genes_de_extra, "EI", "HC")
+
+cat("EN vs HC:\n");   print(de_EN)
+cat("\nEI vs HC:\n"); print(de_EI)
+```
+
+
+# Fig 6A
+```{r,fig.height=5,fig.width=12}
+dataT <- dataH
+
+samplecondition <- data.frame (t(dataT[1,]))
+
+samplecondition$samplename <- rownames(samplecondition)
+
+samplecondition[,1] <- factor(samplecondition[,1], levels = c("HC","EN", "EI"))
+
+samplecondition <- samplecondition[order(samplecondition[,1]),]
+
+dataT<- dataT[samplecondition$samplename]
+
+temp <- dataT[2:610,]
+
+temp <- mutate_all(temp, function(x) as.numeric(as.character(x)))
+
+
+gene_order <- c("HRAS","RAF1","ATG5","ATG10","ATG12","BCL2","ATG7")
+plot_sig <- temp %>% filter(row.names(temp) %in% gene_order) %>% as.matrix()
+plot_sig <- plot_sig[gene_order[gene_order %in% rownames(plot_sig)], , drop = FALSE]
+
+
+plot_scale <- t(scale(t(plot_sig)))
+
+anno_group <- data.frame (t(dataT[1,]))[,1]
+
+column_ha <- HeatmapAnnotation(Condition = anno_group,
+                               col = list(Condition = c("HC" = "#ffc700","EI" = "#fe2504","EN" = "#01c7e1")),
+                               border = TRUE,annotation_name_gp= gpar(fontsize = 3),
+                               annotation_legend_param = list(direction = "horizontal",title = "Condition",
+                                                              title_gp = gpar(fontsize= 15),
+                                                              labels_gp = gpar(fontsize = 15)))
+
+
+heat_group <- Heatmap(plot_scale,
+                      name = " ",
+                      top_annotation = column_ha,
+                      row_names_gp = grid::gpar(fontsize = 15),cluster_rows = FALSE,
+                      column_names_gp = grid::gpar(fontsize = 10),
+                      column_title_gp = gpar(fontsize = 15),
+                      row_title = NULL,
+                      column_split = factor(rep(c("HC","EN","EI"),c(9,16,16)),levels = c("HC","EN","EI")),
+                      cluster_column_slices = FALSE,
+                      show_column_names = TRUE)
+heat_group
+
+```
+
+# Fig 6B
+```{r}
+for (i in c("ATG5","ATG10","BCL2")) {
+
+dratiodf <- melt(data[data$`Probe Name` %in% c(i),],id.vars = "Probe Name",variable.name = "Type",value.name = "Value")
+    
+dratiodf$Group <- toupper(stringr::str_extract(dratiodf$Type, "^.{2}"))
+    
+dratiodf$Value <- as.integer(dratiodf$Value)
+    
+dratiodf$Group <- as.factor(dratiodf$Group)
+    
+dratiodf$Group <- factor(dratiodf$Group,c("BS","EN","EI"))
+    
+dratiodf$Group <- revalue(dratiodf$Group,c("BS"="HC","EN","EI"))
+    
+p <- ggboxplot(dratiodf, x = "Group", y = "Value" ,group_by="Group", fill = "Group",main = i, xlab = "", ylab = "Normalized Counts" ,
+        palette = c("HC" = "#FFC700","EN" = "#01C7E1","EI" = "#FE2504"))+
+        #           stat_compare_means(method ="anova",label.y = 150)+
+        stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+        geom_hline(yintercept = mean(dratiodf[,c(3)]), linetype = 2)+
+        theme(text = element_text(size = 20))+  theme(plot.title = element_text(hjust = 0.5))+
+        theme(legend.position="right")
+
+print(p)
+}
+
+```
+
+# Fig 6B check significant genes box plots
+```{r}
+genes_box <- c("ATG5","ATG10","BCL2")
+
+pval_stars <- function(p) ifelse(is.na(p), "not found",
+                          ifelse(p <= 0.001, "***",
+                          ifelse(p <= 0.01,  "**",
+                          ifelse(p <= 0.05,  "*", "ns"))))
+
+sig_check <- data.frame(
+  Gene     = genes_box,
+  pval_EN  = DEEN$BY.p.value[match(genes_box, DEEN$gene)],
+  pval_EI  = DEEI$BY.p.value[match(genes_box, DEEI$gene)]
+)
+sig_check$stars_EN <- pval_stars(sig_check$pval_EN)
+sig_check$stars_EI <- pval_stars(sig_check$pval_EI)
+
+print(sig_check)
+```
+
+# Fig 7A Heatmap
+```{r,fig.height=6,fig.width=12}
+dataT <- dataH
+
+samplecondition <- data.frame (t(dataT[1,]))
+
+samplecondition$samplename <- rownames(samplecondition)
+
+samplecondition[,1] <- factor(samplecondition[,1], levels = c("HC","EN", "EI"))
+
+samplecondition <- samplecondition[order(samplecondition[,1]),]
+
+dataT<- dataT[samplecondition$samplename]
+
+temp <- dataT[2:610,]
+
+temp <- mutate_all(temp, function(x) as.numeric(as.character(x)))
+
+
+gene_order <- c("BCL2","NLRP3","CASP8","IL18RAP","IL1B","IL18R1","RELA","PYCARD","CASP1","IL18")
+plot_sig <- temp %>% filter(row.names(temp) %in% gene_order) %>% as.matrix()
+plot_sig <- plot_sig[gene_order[gene_order %in% rownames(plot_sig)], , drop = FALSE]
+
+
+plot_scale <- t(scale(t(plot_sig)))
+
+anno_group <- data.frame (t(dataT[1,]))[,1]
+
+column_ha <- HeatmapAnnotation(Condition = anno_group,
+                               col = list(Condition = c("HC" = "#ffc700","EI" = "#fe2504","EN" = "#01c7e1")),
+                               border = TRUE,annotation_name_gp= gpar(fontsize = 3),
+                               annotation_legend_param = list(direction = "horizontal",title = "Condition",
+                                                              title_gp = gpar(fontsize= 15),
+                                                              labels_gp = gpar(fontsize = 15)))
+
+
+heat_group <- Heatmap(plot_scale,
+                      name = " ",
+                      top_annotation = column_ha,
+                      row_names_gp = grid::gpar(fontsize = 15),cluster_rows = FALSE,
+                      column_names_gp = grid::gpar(fontsize = 10),
+                      column_title_gp = gpar(fontsize = 15),
+                      row_title = NULL,
+                      column_split = factor(rep(c("HC","EN","EI"),c(9,16,16)),levels = c("HC","EN","EI")),
+                      cluster_column_slices = FALSE,
+                      show_column_names = TRUE)
+heat_group
+
+```
+
+
+# Fig 7A boxplot
+```{r}
+for (i in c("NLRP3","CASP8","IL1B")) {
+
+dratiodf <- melt(data[data$`Probe Name` %in% c(i),],id.vars = "Probe Name",variable.name = "Type",value.name = "Value")
+    
+dratiodf$Group <- toupper(stringr::str_extract(dratiodf$Type, "^.{2}"))
+    
+dratiodf$Value <- as.integer(dratiodf$Value)
+    
+dratiodf$Group <- as.factor(dratiodf$Group)
+    
+dratiodf$Group <- factor(dratiodf$Group,c("BS","EN","EI"))
+    
+dratiodf$Group <- revalue(dratiodf$Group,c("BS"="HC","EN","EI"))
+    
+p <- ggboxplot(dratiodf, x = "Group", y = "Value" ,group_by="Group", fill = "Group",main = i, xlab = "", ylab = "Normalized Counts" ,
+        palette = c("HC" = "#FFC700","EN" = "#01C7E1","EI" = "#FE2504"))+
+        #           stat_compare_means(method ="anova",label.y = 150)+
+        stat_compare_means(label = "p.signif", method = "t.test",ref.group = ".all.")+
+        geom_hline(yintercept = mean(dratiodf[,c(3)]), linetype = 2)+
+        theme(text = element_text(size = 20))+  theme(plot.title = element_text(hjust = 0.5))+
+        theme(legend.position="right")
+
+print(p)
+}
+
+```
+
+# Fig 7A boxplot check significant genes box plots
+```{r}
+genes_box <- c("NLRP3","CASP8","IL1B")
+
+pval_stars <- function(p) ifelse(is.na(p), "not found",
+                          ifelse(p <= 0.001, "***",
+                          ifelse(p <= 0.01,  "**",
+                          ifelse(p <= 0.05,  "*", "ns"))))
+
+sig_check <- data.frame(
+  Gene     = genes_box,
+  pval_EN  = DEEN$BY.p.value[match(genes_box, DEEN$gene)],
+  pval_EI  = DEEI$BY.p.value[match(genes_box, DEEI$gene)]
+)
+sig_check$stars_EN <- pval_stars(sig_check$pval_EN)
+sig_check$stars_EI <- pval_stars(sig_check$pval_EI)
+
+print(sig_check)
+```
+
+
+# Supplementary Fig 2A
+```{r,fig.height=9,fig.width=10}
+dataAI <- dataH
+
+dataAI[1,] <- metadata$Idiopathic[match(metadata$Name, names(dataAI[1,]))]
+
+samplecondition <- data.frame (t(dataAI[1,]))
+
+samplecondition$samplename <- rownames(samplecondition)
+
+samplecondition[,1] <- factor(samplecondition[,1], levels = c("Idiopathic", "Not Idiopathic","HC"))
+
+samplecondition <- samplecondition[order(samplecondition[,1]),]
+
+dataAI<- dataAI[samplecondition$samplename]
+
+temp <- dataAI[2:610,]
+
+temp <- mutate_all(temp, function(x) as.numeric(as.character(x)))
+
+
+idio_samples <- samplecondition$samplename[samplecondition[,1] == "Idiopathic" & !is.na(samplecondition[,1])]
+not_idio_samples <- samplecondition$samplename[samplecondition[,1] == "Not Idiopathic" & !is.na(samplecondition[,1])]
+de_pvals <- apply(temp, 1, function(gene_expr) {
+  tryCatch(
+    t.test(gene_expr[idio_samples], gene_expr[not_idio_samples])$p.value,
+    error = function(e) NA
+  )
+})
+sign <- names(sort(de_pvals, na.last = TRUE))[1:24]
+plot_sig <- temp %>% filter(row.names(temp) %in% sign) %>% as.matrix()
+
+#plot_sig <- temp %>% filter(row.names(temp) %in% c("ABCB1","ABL1","ADA","AHR","AICDA","AIRE","APP","ARG1","ARG2","ARHGDIB","ATG10","ATG12","ATG16L1","ATG5","ATG7"  ,"ATM","B2M","B3GAT1","BATF","BATF3","BAX","BCAP31","BCL10","BCL2","BCL2L11","BCL3","BCL6","BID","BLNK","BST1","BST2","BTK","BTLA","C14orf166","C1QA","C1QB","C1QBP","C1R","C1S","C2")) %>% as.matrix()
+
+
+plot_scale <- t(scale(t(plot_sig)))
+
+anno_group <- data.frame (t(dataAI[1,]))[,1]
+
+column_ha <- HeatmapAnnotation(Condition = anno_group,
+                               col = list(Condition = c("Idiopathic" = "#e05c00","HC" = "#ffc700","Not Idiopathic" = "#c8c8c8")),
+                               border = TRUE,annotation_name_gp= gpar(fontsize = 3),
+                               annotation_legend_param = list(direction = "horizontal",title = "Condition",
+                                                              title_gp = gpar(fontsize= 15),
+                                                              labels_gp = gpar(fontsize = 15)))
+
+heat_group <- Heatmap(plot_scale,
+                      name = " ",
+                      top_annotation = column_ha,
+                      row_names_gp = grid::gpar(fontsize = 15),
+                      column_names_gp = grid::gpar(fontsize = 10),
+                      column_title_gp = gpar(fontsize = 15),
+                      row_title = NULL,
+                      column_split = factor(rep(c("Idiopathic", "Not Idiopathic","HC"),c(15,17,9)),levels = c("Idiopathic", "Not Idiopathic","HC")),
+                      cluster_column_slices = FALSE,
+                      show_column_names = TRUE)
+heat_group
+
+
+```
+

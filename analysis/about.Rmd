@@ -1,0 +1,10 @@
+---
+title: "About"
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+Brüggen Lab, University of Zurich and University Hospital Zurich, Switzerland. Contact: Prof. Marie-Charlotte Brüggen (corresponding author of the paper).

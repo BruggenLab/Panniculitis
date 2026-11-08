@@ -1,0 +1,713 @@
+---
+title: "04 IMC figures (Figs. 1-3, Supplementary Figs. 2B and 3)"
+output: html_document
+date: "2026-10-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE, cache=FALSE}
+library(imcRtools)
+library(cytomapper)
+library(dplyr)
+library(dittoSeq)
+library(ggpubr)
+library(scuttle)
+library(tidyr)
+library(ggplot2)
+library(rstatix)
+```
+
+
+```{r}
+spe <- readRDS(here::here("data", "spe_all_annoted_Final.rds"))
+```
+
+
+```{r}
+celltype <- setNames(
+c("#d62728",
+  "#ff7f0e",
+  "#ffbb78",
+  "#1f77b4",
+  "#6baed6",
+  "#aec7e8",
+  "#8c564b",
+  "#C4A484",
+  "#2ca02c",
+  "#c5b0d5",
+  "#393b79",
+  "#7f7f7f",
+  "#f7b6d2",
+  "#FF7F7F",
+  "#1f77b4"),
+            
+c("Macrophages",
+  "M1 Macrophages",
+  "M2 Macrophages",
+  "Helper/Regulatory T-cells",
+  "Helper T-cells",
+  "Cytotoxic T-cells",
+  "B-cells",
+  "IgM B-cells",
+  "Neutrophils",
+  "DCs",
+  "APCs",
+  "Others",
+  "Adipocytes",
+  "Endothelial",
+  "Regulatory T-cells"))
+```
+
+# Fig 1C
+```{r,fig.height=20,fig.width=26}
+pielots <- list()
+
+for (i in unique(spe$indication)) {
+  
+PI_data<- as.data.frame(round(table(spe[,spe$indication %in% i]$celltype)/sum(table(spe[,spe$indication %in% i]$celltype)),digits=2)*100)
+
+PI_data <- PI_data %>% filter(Freq > 0)
+
+PI_data$Var1 <- factor(PI_data$Var1, levels = c("Macrophages",
+                                                              "M1 Macrophages",
+                                                              "M2 Macrophages",
+                                                              "Helper T-cells",
+                                                              "Cytotoxic T-cells",
+                                                              "Regulatory T-cells",
+                                                              "Neutrophils",
+                                                              "B-cells",
+                                                              "IgM B-cells",
+                                                              "DCs",
+                                                              "APCs",
+                                                              "Endothelial",  
+                                                              "Adipocytes",
+                                                              "Others"))
+
+PI_data <- PI_data[order(PI_data$Var1),]
+
+PI_data$Color <- celltype[match(PI_data$Var1, names(celltype))]
+
+pie(PI_data$Freq, 
+      labels = paste0(as.character(PI_data$Var1), "  ", PI_data$Freq, "%"),
+      main = paste("", i),
+      radius = 0.6, 
+      col = PI_data$Color, 
+      cex = 2,
+      cex.main = 2)
+
+
+pie(PI_data$Freq, labels=NA, radius=1 ,col=PI_data$Color, cex=1.9,cex.main=2)
+
+  
+  # Capture the current plot and store it in the list
+pielots[[i]] <- recordPlot()
+  
+  # Optionally, clear the plot to prepare for the next one
+#dev.off()
+}
+
+```
+
+
+# Fig 1D
+```{r,fig.height=10, fig.width=20}
+
+dittoDimPlot(spe, var = "celltype_general", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = FALSE,labels.size = 6,legend.size = 8) +
+  scale_color_manual(values = metadata(spe)$color_vectors$celltype_general)+
+    ggtitle("Phenograph clusters expression on seurat UMAP, integrated cells")
+
+```
+
+
+#Fig 1E
+```{r,fig.height=10, fig.width=20}
+dittoDimPlot(spe, var = "celltype", reduction.use = "UMAP_mnnCorrected", size = 0.6, do.label = FALSE,labels.size = 6,legend.size = 8) +
+  scale_color_manual(values = metadata(spe)$color_vectors$celltype)+
+    ggtitle("Phenograph clusters expression on seurat UMAP, integrated cells")
+```
+
+
+#Fig 2A
+```{r,fig.height=11, fig.width=10}
+
+rowData(spe)$use_channel3= rowData(spe)$use_channel2=rowData(spe)$use_channel2 <- !grepl("DNA|ICSK|PDL1|PD1|CD45RO|CXCR3|CCR4|E-Cadherin", rownames(spe))
+
+
+spe$celltype_factor <- spe$celltype
+spe$celltype_factor <- factor(spe$celltype_factor, levels = c("Macrophages",
+                                                              "M1 Macrophages",
+                                                              "M2 Macrophages",
+                                                              "Helper T-cells",
+                                                              "Cytotoxic T-cells",
+                                                              "Regulatory T-cells",
+                                                              "Neutrophils",
+                                                              "B-cells",
+                                                              "IgM B-cells",
+                                                              "DCs",
+                                                              "APCs",
+                                                              "Endothelial",  
+                                                              "Adipocytes",
+                                                              "Others"))
+
+cluster_mean <- aggregateAcrossCells(as(spe, "SingleCellExperiment"), ids = spe$celltype, statistics = "mean", use.assay.type = "exprs")
+
+# Z score scaled
+dittoHeatmap(cluster_mean, genes = rownames(spe)[rowData(spe)$use_channel2],
+             assay = "exprs", 
+             show_colnames = TRUE,
+             cluster_cols = FALSE, 
+             annot.by = c("celltype"),
+             order.by = c("celltype_factor"),
+             annotation_colors =  list(celltype =metadata(spe)$color_vectors$celltype), angle_row = 45
+             )
+
+```
+
+# Fig 2B
+```{r, fig.height=4, fig.width=4}
+
+# Cell density per mm^2 — per-ROI computation, patient-level statistics
+#
+# What this chunk does:
+#   1. Computes cell DENSITY (cells per mm^2) per ROI per cell type.
+#      Each ROI area in mm^2 = width_px * height_px * (PIXEL_UM / 1000)^2,
+#      assuming the IMC acquisition uses `PIXEL_UM` micrometres per pixel
+#      (Hyperion IMC is standardly 1 um/px — change below if yours differs).
+#
+#   2. Aggregates multiple ROIs from the same patient (median density across
+#      ROIs) to give ONE value per patient per cell type. This avoids
+#      pseudoreplication when ROIs from the same patient are not independent.
+#
+#   3. Runs Kruskal-Wallis (omnibus, HC vs EN vs EI) per cell type,
+#      with Benjamini-Hochberg FDR correction across cell types.
+#
+#   4. Runs Dunn's post-hoc pairwise test (HC-EN, HC-EI, EN-EI) per cell type
+#      with BH correction within each cell type.
+#
+#   5. Plots patient-level boxplots with individual patient dots and
+#      pairwise significance brackets for significant comparisons only.
+
+# ---- IMC pixel size (micrometres per pixel). Standard Hyperion = 1. ----
+PIXEL_UM <- 1
+
+# ---- helper: compute cell density (cells / mm^2) per ROI ----
+get_density_per_roi <- function(spe, pixel_um = 1) {
+  meta <- as.data.frame(colData(spe))
+
+  # area per ROI in mm^2
+  # 1 mm = 1000 um, so area_mm2 = (width_px * pixel_um / 1000) * (height_px * pixel_um / 1000)
+  area_tbl <- meta %>%
+    dplyr::distinct(sample_id, patient_id, indication, width_px, height_px) %>%
+    dplyr::mutate(area_mm2 = (width_px * pixel_um / 1000) *
+                              (height_px * pixel_um / 1000))
+
+  # counts per (ROI, celltype)
+  counts_tbl <- meta %>%
+    dplyr::count(sample_id, patient_id, indication, celltype, name = "cell_count")
+
+  # make sure every (ROI x celltype) combination exists (fill zeros)
+  counts_tbl <- counts_tbl %>%
+    tidyr::complete(
+      tidyr::nesting(sample_id, patient_id, indication),
+      celltype,
+      fill = list(cell_count = 0)
+    )
+
+  counts_tbl %>%
+    dplyr::left_join(area_tbl %>% dplyr::select(sample_id, area_mm2),
+                     by = "sample_id") %>%
+    dplyr::filter(!is.na(area_mm2) & area_mm2 > 0) %>%
+    dplyr::mutate(density_per_mm2 = cell_count / area_mm2)
+}
+
+# ROI-level density
+roi_df <- get_density_per_roi(spe, pixel_um = PIXEL_UM)
+roi_df$indication <- factor(roi_df$indication, levels = c("HC", "EN", "EI"))
+
+# patient-level density: median across ROIs per patient
+patient_df <- roi_df %>%
+  dplyr::group_by(patient_id, indication, celltype) %>%
+  dplyr::summarise(density_per_mm2 = median(density_per_mm2, na.rm = TRUE),
+                   .groups = "drop")
+
+# ---- minimum observations per group required to run a test for a cell type ----
+MIN_N_PER_GROUP <- 2
+
+# helper: check if a cell type has enough observations across enough groups
+has_enough_obs <- function(d, min_n = MIN_N_PER_GROUP, min_groups = 2) {
+  n_per_group <- d %>%
+    dplyr::filter(!is.na(density_per_mm2)) %>%
+    dplyr::count(indication) %>%
+    dplyr::filter(n >= min_n)
+  nrow(n_per_group) >= min_groups
+}
+
+# ---- Kruskal-Wallis per cell type (omnibus) + BH across cell types ----
+kw_stats <- purrr::map_dfr(
+  sort(unique(as.character(patient_df$celltype))),
+  function(ct) {
+    d <- patient_df %>% dplyr::filter(celltype == ct)
+    if (!has_enough_obs(d)) return(NULL)
+    out <- tryCatch(
+      rstatix::kruskal_test(d, density_per_mm2 ~ indication),
+      error = function(e) NULL
+    )
+    if (is.null(out)) return(NULL)
+    out$celltype <- ct
+    out
+  }
+)
+
+if (nrow(kw_stats) > 0) {
+  kw_stats <- kw_stats %>%
+    dplyr::mutate(p_adj_cell = p.adjust(p, method = "BH")) %>%
+    dplyr::select(celltype, dplyr::everything())
+}
+
+cat("\n--- Kruskal-Wallis (omnibus) by cell type ---\n")
+print(kw_stats)
+
+# ---- Dunn's post-hoc pairwise (BH within each cell type) ----
+dunn_stats <- purrr::map_dfr(
+  sort(unique(as.character(patient_df$celltype))),
+  function(ct) {
+    d <- patient_df %>% dplyr::filter(celltype == ct)
+    if (!has_enough_obs(d)) return(NULL)
+    out <- tryCatch(
+      rstatix::dunn_test(d, density_per_mm2 ~ indication,
+                         p.adjust.method = "BH"),
+      error = function(e) NULL
+    )
+    if (is.null(out) || nrow(out) == 0) return(NULL)
+    out$celltype <- ct
+    out
+  }
+)
+
+if (nrow(dunn_stats) > 0) {
+  dunn_stats <- dunn_stats %>%
+    dplyr::select(celltype, dplyr::everything())
+}
+
+cat("\n--- Dunn's pairwise post-hoc ---\n")
+print(dunn_stats)
+
+# ---- plotting ----
+cols <- c("HC" = "#ffc700",
+          "EN" = "#01c7e1",
+          "EI" = "#fe2504")
+
+plot_celltype_density <- function(ct,
+                                  df    = patient_df,
+                                  dunn  = dunn_stats) {
+  d <- df %>% dplyr::filter(celltype == ct)
+
+  # select only significant pairwise comparisons for this cell type
+  # (guard against dunn being empty / having no 'celltype' column)
+  if (!is.null(dunn) && nrow(dunn) > 0 && "celltype" %in% names(dunn)) {
+    st <- dunn %>%
+      dplyr::filter(celltype == ct, p.adj < 0.05) %>%
+      dplyr::mutate(
+        p_label = dplyr::case_when(
+          p.adj < 0.001 ~ "***",
+          p.adj < 0.01  ~ "**",
+          TRUE          ~ "*"
+        )
+      )
+  } else {
+    st <- tibble::tibble()
+  }
+
+  # y positions for significance brackets (stacked above the max value)
+  y_max <- max(d$density_per_mm2, na.rm = TRUE)
+  if (nrow(st) > 0) {
+    st <- st %>%
+      dplyr::arrange(p.adj) %>%
+      dplyr::mutate(y.position = y_max * (1.08 + 0.10 * (dplyr::row_number() - 1)))
+  }
+
+  p <- ggplot(d, aes(x = indication, y = density_per_mm2, fill = indication)) +
+    geom_boxplot(outlier.shape = NA, width = 0.6, alpha = 0.85,
+                 linewidth = 0.7) +
+    geom_jitter(width = 0.15, alpha = 0.75, size = 2.2) +
+    scale_fill_manual(values = cols) +
+    theme_classic(base_size = 18) +
+    labs(title = ct,
+         x = NULL,
+         y = expression("Cell density (cells per mm"^2*")")) +
+    theme(plot.title   = element_text(hjust = 0.5, face = "bold", size = 20),
+          axis.title.y = element_text(size = 16, face = "bold"),
+          axis.text.x  = element_text(size = 16, face = "bold", color = "black"),
+          axis.text.y  = element_text(size = 14, face = "bold", color = "black"),
+          axis.line    = element_line(linewidth = 0.7),
+          axis.ticks   = element_line(linewidth = 0.6),
+          legend.position = "none")
+
+  if (nrow(st) > 0) {
+    p <- p + ggpubr::stat_pvalue_manual(
+      st,
+      label        = "p_label",
+      tip.length   = 0.01,
+      size         = 8,
+      bracket.size = 0.7
+    )
+  }
+  p
+}
+
+# cell types shown in Figure 2B (add or remove as needed)
+cell_types_to_plot <- c(
+  "Helper T-cells",
+  "Cytotoxic T-cells",
+  "Regulatory T-cells",
+  "M1 Macrophages",
+  "APCs",
+  "DCs"
+)
+
+for (ct in cell_types_to_plot) {
+  print(plot_celltype_density(ct))
+}
+```
+
+# Fig 2C
+```{r,fig.width=8, fig.height=5}
+make_bar <- function(spe, title, cell_colors) {
+  df <- as.data.frame(colData(spe)) |>
+    tidyr::drop_na(celltype) |>
+    dplyr::count(celltype, name = "n") |>
+    filter(n > 0.0) |>
+    mutate(pct = n / sum(n)) |>
+    filter(pct >= 0.0001)
+  
+  ggplot(df, aes(x = reorder(celltype, n), y = n, fill = celltype)) +
+    geom_col() +
+    coord_flip() +
+    geom_text(aes(label = scales::percent(pct, accuracy = 0.01)),   # 1 decimal place
+              hjust = -0.1, size = 5) +
+    labs(x = NULL, y = "Cells", title = title) +
+    theme_minimal(base_size = 14) +
+    theme(legend.position = "none") +
+    expand_limits(y = max(df$n) * 1.12) +
+    scale_fill_manual(values = cell_colors, guide = "none")
+}
+
+
+make_bar(spe[,spe$indication=="HC"], "HC", metadata(spe)$color_vectors$celltype)
+make_bar(spe[,spe$indication=="EN"], "EN", metadata(spe)$color_vectors$celltype)
+make_bar(spe[,spe$indication=="EI"], "EI", metadata(spe)$color_vectors$celltype)
+```
+
+
+#Fig 3A, 3D, 3G
+```{r, fig.height=10, fig.width=10}
+# TestInteractions
+res <- readRDS(here::here("data", "TestInteractions.rds"))
+
+# show all plots
+for (nm in names(res)) { message(nm); print(res[[nm]]$plot) }
+
+# access any result object if needed, e.g.:
+# res$ADFA$out
+```
+
+
+# assign clinical condition
+```{r}
+# Patient identifiers per clinical group are kept in a private file that is not shared
+# (data/ is not part of the repository). It defines the character vectors
+# autoimmune, infection, neoplasia, obesity, overweight and HN (patient_id values).
+source(here::here("data", "patient_groups.R"))
+
+sce <- spe
+sce$Autoimmune <- ifelse(sce$patient_id %in% autoimmune, "Yes", "No")
+sce$Infection  <- ifelse(sce$patient_id %in% infection, "Yes", "No")
+
+# idiopathic = EN/EI patient without a documented autoimmune, infectious or neoplastic trigger;
+# HC are NA so they are not counted
+triggered_patients <- unique(c(autoimmune, infection, neoplasia))
+sce$idiopathic <- NA_character_
+sce$idiopathic[sce$indication %in% c("EN","EI")] <- "Yes"
+sce$idiopathic[sce$patient_id %in% triggered_patients] <- "No"
+
+sce$Obesity    <- ifelse(sce$patient_id %in% obesity, "Yes", "No")
+sce$Overweight <- ifelse(sce$patient_id %in% overweight, "Yes", "No")
+sce$HN         <- ifelse(sce$patient_id %in% HN, "Yes", "No")
+
+df <- as.data.frame(colData(sce))
+```
+
+
+# Supplementary Figure 2B
+```{r, fig.width=12, fig.height=6}
+library(tidyr)
+library(tibble)
+
+# restrict to panniculitis patients (HC are NA for the idiopathic variable anyway)
+sce_pann <- sce[, !is.na(sce$idiopathic)]
+
+excluded_types <- c("Helper/Regulatory T-cells")
+
+cd <- as.data.frame(colData(sce_pann))
+cd <- cd[!cd$celltype %in% excluded_types, ]
+# drop the excluded level so it doesn't come back via tidyr::complete
+cd$celltype <- droplevels(factor(cd$celltype))
+
+# Reorder cell types into biologically meaningful groups for the x-axis.
+# Any cell types present in the data but not listed here will be appended at the end.
+celltype_order <- c(
+  # macrophage lineage
+  "Macrophages", "M1 Macrophages", "M2 Macrophages",
+  # antigen-presenting cells
+  "DCs", "APCs",
+  # granulocytes
+  "Neutrophils",
+  # T cells
+  "Cytotoxic T-cells", "Helper T-cells", "Regulatory T-cells",
+  # B cells
+  "B-cells", "IgM B-cells",
+  # stromal / other
+  "Adipocytes", "Endothelial", "Others"
+)
+present     <- intersect(celltype_order, levels(cd$celltype))
+unmentioned <- setdiff(levels(cd$celltype), celltype_order)
+cd$celltype <- factor(cd$celltype, levels = c(present, unmentioned))
+
+# patient-level metadata (one row per patient)
+patient_meta <- cd %>%
+  dplyr::distinct(patient_id, idiopathic)
+
+n_idio_total      <- sum(patient_meta$idiopathic == "Yes")
+n_triggered_total <- sum(patient_meta$idiopathic == "No")
+
+# per-patient cell-type counts -> proportions, filling zeros for missing combinations
+prop_df <- cd %>%
+  dplyr::count(patient_id, celltype, name = "n") %>%
+  tidyr::complete(patient_id, celltype, fill = list(n = 0)) %>%
+  dplyr::group_by(patient_id) %>%
+  dplyr::mutate(proportion = n / sum(n) * 100) %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(patient_meta, by = "patient_id")
+
+# Mann-Whitney per cell type + Benjamini-Hochberg FDR
+stat_df <- prop_df %>%
+  dplyr::group_by(celltype) %>%
+  dplyr::summarise(
+    n_idio      = sum(idiopathic == "Yes"),
+    n_triggered = sum(idiopathic == "No"),
+    p = tryCatch(
+      wilcox.test(proportion ~ idiopathic, exact = FALSE)$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  dplyr::mutate(
+    p_adj   = p.adjust(p, method = "BH"),
+    # only label cell types that reach significance after FDR correction
+    p_label = dplyr::case_when(
+      is.na(p_adj)   ~ "",
+      p_adj < 0.001  ~ "***",
+      p_adj < 0.01   ~ "**",
+      p_adj < 0.05   ~ "*",
+      TRUE           ~ ""
+    )
+  )
+
+print(stat_df)
+
+# y position for significance labels (only for cell types surviving FDR)
+label_y <- prop_df %>%
+  dplyr::group_by(celltype) %>%
+  dplyr::summarise(y = max(proportion, na.rm = TRUE) * 1.08, .groups = "drop") %>%
+  dplyr::left_join(stat_df %>% dplyr::select(celltype, p_label), by = "celltype") %>%
+  dplyr::filter(p_label != "")
+
+any_significant <- nrow(label_y) > 0
+
+subtitle_txt <- sprintf(
+  "Idiopathic n = %d, Not idiopathic n = %d  |  Mann-Whitney U, Benjamini-Hochberg FDR  |  %s",
+  n_idio_total, n_triggered_total,
+  if (any_significant) "significant comparisons marked"
+  else "no comparison reached significance (all adjusted p > 0.05)"
+)
+
+p <- ggplot(prop_df, aes(x = celltype, y = proportion, fill = idiopathic)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6,
+               position = position_dodge(width = 0.75), width = 0.6) +
+  geom_point(aes(color = idiopathic),
+             position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.75),
+             size = 1.6, alpha = 0.85) +
+  scale_fill_manual(values  = c("Yes" = "#01c7e1", "No" = "#fe2504"),
+                    labels  = c("Yes" = "Idiopathic", "No" = "Not idiopathic"),
+                    breaks  = c("No", "Yes")) +
+  scale_color_manual(values = c("Yes" = "#01c7e1", "No" = "#fe2504"),
+                     labels = c("Yes" = "Idiopathic", "No" = "Not idiopathic"),
+                     breaks = c("No", "Yes")) +
+  theme_classic() +
+  theme(
+    text             = element_text(size = 14),
+    plot.title       = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle    = element_text(hjust = 0.5, size = 10.5, color = "grey30"),
+    legend.position  = "right",
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(title    = "Cell-type proportions: idiopathic vs not idiopathic (pooled EN + EI)",
+       subtitle = subtitle_txt,
+       x = NULL, y = "Cell-type proportion per patient (%)",
+       fill = NULL, color = NULL)
+
+# only draw asterisks if any comparison survives FDR
+if (any_significant) {
+  p <- p + geom_text(data = label_y,
+                     aes(x = celltype, y = y, label = p_label),
+                     inherit.aes = FALSE, size = 5)
+}
+
+print(p)
+```
+
+# Supplementary Figure 3A, 3B
+```{r, fig.width=12, fig.height=6}
+# Autoimmune & Infection: per-patient proportions with Mann-Whitney + FDR
+# Same method as the idiopathic analysis above (per-patient proportions,
+# Mann-Whitney U, Benjamini-Hochberg FDR, boxplot with individual patient dots).
+# Wrapped into a function so the logic is defined once and can be reused.
+plot_celltype_by_group <- function(sce_obj,
+                                   group_var,
+                                   group_label   = group_var,
+                                   yes_label     = "Yes",
+                                   no_label      = "No",
+                                   excluded_types = c("Helper/Regulatory T-cells"),
+                                   restrict_to_pann = TRUE) {
+
+  # restrict to panniculitis patients (HC would otherwise all be "No")
+  if (restrict_to_pann) {
+    sce_obj <- sce_obj[, sce_obj$indication %in% c("EN", "EI")]
+  }
+
+  cd <- as.data.frame(colData(sce_obj))
+  cd <- cd[!cd$celltype %in% excluded_types, ]
+  cd$celltype <- droplevels(factor(cd$celltype))
+
+  # biologically meaningful cell-type order
+  celltype_order <- c(
+    "Macrophages", "M1 Macrophages", "M2 Macrophages",
+    "DCs", "APCs",
+    "Neutrophils",
+    "Cytotoxic T-cells", "Helper T-cells", "Regulatory T-cells",
+    "B-cells", "IgM B-cells",
+    "Adipocytes", "Endothelial", "Others"
+  )
+  present     <- intersect(celltype_order, levels(cd$celltype))
+  unmentioned <- setdiff(levels(cd$celltype), celltype_order)
+  cd$celltype <- factor(cd$celltype, levels = c(present, unmentioned))
+
+  # patient-level metadata using the chosen grouping variable
+  cd$.group <- cd[[group_var]]
+  patient_meta <- cd %>% dplyr::distinct(patient_id, .group)
+
+  n_yes <- sum(patient_meta$.group == "Yes")
+  n_no  <- sum(patient_meta$.group == "No")
+
+  # per-patient proportions (fill zeros for missing combinations)
+  prop_df <- cd %>%
+    dplyr::count(patient_id, celltype, name = "n") %>%
+    tidyr::complete(patient_id, celltype, fill = list(n = 0)) %>%
+    dplyr::group_by(patient_id) %>%
+    dplyr::mutate(proportion = n / sum(n) * 100) %>%
+    dplyr::ungroup() %>%
+    dplyr::left_join(patient_meta, by = "patient_id")
+
+  # Mann-Whitney per cell type + BH FDR
+  stat_df <- prop_df %>%
+    dplyr::group_by(celltype) %>%
+    dplyr::summarise(
+      n_yes = sum(.group == "Yes"),
+      n_no  = sum(.group == "No"),
+      p = tryCatch(
+        wilcox.test(proportion ~ .group, exact = FALSE)$p.value,
+        error = function(e) NA_real_
+      ),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      p_adj   = p.adjust(p, method = "BH"),
+      p_label = dplyr::case_when(
+        is.na(p_adj)  ~ "",
+        p_adj < 0.001 ~ "***",
+        p_adj < 0.01  ~ "**",
+        p_adj < 0.05  ~ "*",
+        TRUE          ~ ""
+      )
+    )
+
+  cat("\n--- ", group_label, " ---\n", sep = "")
+  print(stat_df)
+
+  label_y <- prop_df %>%
+    dplyr::group_by(celltype) %>%
+    dplyr::summarise(y = max(proportion, na.rm = TRUE) * 1.08, .groups = "drop") %>%
+    dplyr::left_join(stat_df %>% dplyr::select(celltype, p_label), by = "celltype") %>%
+    dplyr::filter(p_label != "")
+
+  any_significant <- nrow(label_y) > 0
+
+  subtitle_txt <- sprintf(
+    "%s n = %d, not %s n = %d  |  Mann-Whitney U, Benjamini-Hochberg FDR  |  %s",
+    yes_label, n_yes, tolower(yes_label), n_no,
+    if (any_significant) "significant comparisons marked"
+    else "no comparison reached significance (all adjusted p > 0.05)"
+  )
+
+  p <- ggplot(prop_df, aes(x = celltype, y = proportion, fill = .group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.6,
+                 position = position_dodge(width = 0.75), width = 0.6) +
+    geom_point(aes(color = .group),
+               position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.75),
+               size = 1.6, alpha = 0.85) +
+    scale_fill_manual(values  = c("Yes" = "#01c7e1", "No" = "#fe2504"),
+                      labels  = c("Yes" = yes_label,   "No" = no_label),
+                      breaks  = c("No", "Yes")) +
+    scale_color_manual(values = c("Yes" = "#01c7e1", "No" = "#fe2504"),
+                       labels = c("Yes" = yes_label,  "No" = no_label),
+                       breaks = c("No", "Yes")) +
+    theme_classic() +
+    theme(
+      text             = element_text(size = 14),
+      plot.title       = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle    = element_text(hjust = 0.5, size = 10.5, color = "grey30"),
+      legend.position  = "right",
+      axis.text.x      = element_text(angle = 45, hjust = 1)
+    ) +
+    labs(title    = sprintf("Cell-type proportions: %s vs %s (pooled EN + EI)",
+                            yes_label, no_label),
+         subtitle = subtitle_txt,
+         x = NULL, y = "Cell-type proportion per patient (%)",
+         fill = NULL, color = NULL)
+
+  if (any_significant) {
+    p <- p + geom_text(data = label_y,
+                       aes(x = celltype, y = y, label = p_label),
+                       inherit.aes = FALSE, size = 5)
+  }
+
+  print(p)
+  invisible(stat_df)
+}
+
+# Autoimmune
+stat_auto <- plot_celltype_by_group(sce, "Autoimmune",
+                                    yes_label = "Autoimmune",
+                                    no_label  = "Non-autoimmune")
+
+# Infection
+stat_inf  <- plot_celltype_by_group(sce, "Infection",
+                                    yes_label = "Infection",
+                                    no_label  = "No infection")
+```

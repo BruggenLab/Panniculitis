@@ -1,0 +1,166 @@
+---
+title: "01 IMC: read steinbock output"
+output: html_document
+date: "2023-12-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# steinbock output (img/, masks/, intensities/, ...) and sample_metadata.xlsx;
+# adjust if stored elsewhere
+steinbock_dir <- here::here("..", "data")
+```
+
+```{r, include=FALSE, warning=FALSE, message=FALSE, cache=FALSE}
+library(imcRtools)
+library(cytomapper)
+library(openxlsx)
+library(stringr)
+library(dittoSeq)
+library(patchwork)
+library(RColorBrewer)
+```
+
+
+```{r}
+spe <- read_steinbock(steinbock_dir)
+spe
+
+```
+
+```{r}
+#counts
+#counts(spe)[1:5,1:5]
+
+#meta data cells
+head(colData(spe))
+
+#meta data channels
+head(rowData(spe))
+
+#spatial locations of cells
+#head(spatialCoords(spe))
+
+#colPair
+#colPair(spe, "neighborhood")
+```
+
+# set colnames for each cell sampleId_ObjectNumber
+
+```{r}
+colnames(spe) <- paste0(spe$sample_id, "_", spe$ObjectNumber)
+```
+
+# add metadat
+
+```{r}
+meta <- read.xlsx(file.path(steinbock_dir, "sample_metadata.xlsx"))
+
+spe$patient_id <- as.vector(sub("_001|_002|_003|_004|_005", "", spe$sample_id))
+spe$ROI <- as.vector(gsub("^.*_(001|002|003|004|005)$", "\\1", spe$sample_id))
+spe$indication <- meta$Indication[match(spe$patient_id, meta$Sample.ID)]
+
+unique(spe$indication)
+```
+
+#Transform counts
+
+```{r}
+#counts transformation using an inverse hyperbolic sine function
+assay(spe, "exprs") <- asinh(counts(spe)/1)
+
+#scale exprs
+assay(spe, "exprs_scaled") <- t(scale(t(assay(spe, "exprs"))))
+```
+
+#plot transformed results
+
+```{r,fig.height=15}
+p1 <- dittoRidgePlot(spe, var = "CD3", group.by = "patient_id", assay = "counts") + ggtitle("CD3 - before transformation")
+p2 <- dittoRidgePlot(spe, var = "CD3", group.by = "patient_id", assay = "exprs") + ggtitle("CD3 - after transformation")
+p3 <- dittoRidgePlot(spe, var = "CD3", group.by = "patient_id", assay = "exprs_scaled") + ggtitle("CD3 - scaled transformation")
+
+(p1) / (p2) / (p3)
+```
+
+#Define interesting channels
+
+```{r}
+rowData(spe)$use_channel <- !grepl("DNA|ICSK", rownames(spe))
+```
+
+
+```{r}
+unique(spe$sample_id)
+```
+
+#Define color schemes
+
+```{r}
+color_vectors <- list()
+
+ROI <- setNames(brewer.pal(length(unique(spe$ROI)), name = "BrBG"), unique(spe$ROI))
+
+patient_id <- setNames(c(brewer.pal(9, "YlOrRd"),
+                         brewer.pal(9, "PuBu"),
+                         brewer.pal(9, "YlGn"),
+                         brewer.pal(7, "GnBu")),
+                       unique(spe$patient_id))
+
+
+sample_id <- setNames(c(brewer.pal(9, "GnBu"),
+                        brewer.pal(9, "BuGn"),
+                        brewer.pal(9, "YlGn"),
+                        brewer.pal(9, "BuPu"),
+                        brewer.pal(9, "PuBu"),
+                        brewer.pal(9, "BuPu"),
+                        brewer.pal(9, "PuBu"),
+                        brewer.pal(8, "GnBu")),
+                      unique(spe$sample_id))
+
+indication <- setNames(brewer.pal(length(unique(spe$indication)), name = "Set2"), unique(spe$indication))
+
+color_vectors$ROI <- ROI
+color_vectors$patient_id <- patient_id
+color_vectors$sample_id <- sample_id
+color_vectors$indication <- indication
+
+metadata(spe)$color_vectors <- color_vectors
+```
+
+#Read in images and masks
+
+```{r}
+#32-bit
+images <- loadImages(file.path(steinbock_dir, "img"))
+
+##all_mask <- scaleImages(all_mask,2^32-1)
+#if16-bit (scale pixel set as.is = TRUE)
+masks <- loadImages(file.path(steinbock_dir, "masks"), as.is = TRUE)
+
+channelNames(images) <- rownames(spe)
+images
+
+#order of the images in both CytoImageList objects is the same
+all.equal(names(images), names(masks))
+
+#additional metadata to the elementMetadata slot of the CytoImageList
+
+patient_id <- as.vector(sub("_001|_002|_003|_004|_005", "", names(images)))
+indication <- meta$Indication[match(patient_id, meta$Sample.ID)] 
+mcols(images) <- mcols(masks) <- DataFrame(sample_id = names(images),patient_id = patient_id,indication = indication)
+```
+
+#remove energy test RIOs
+```{r}
+spe <- spe[,!spe$sample_id %in% c("I1_003","I1_002","I1_001")]
+```
+
+
+#Save data in data folder of the workflow
+
+```{r}
+saveRDS(spe, here::here("data", "spe_all.rds"))
+saveRDS(images, here::here("data", "images.rds"))
+saveRDS(masks, here::here("data", "masks.rds"))
+```
